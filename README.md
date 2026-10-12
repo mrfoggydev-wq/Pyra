@@ -1,3 +1,7 @@
+![Python](https://img.shields.io/badge/python-3.10+-blue)
+![Tests](https://github.com/mrfoggydev-wq/Pyra/actions/workflows/.../badge.svg)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 # Pyra
 
 Pyra — язык с файлами `.fm` и полной совместимостью с Python. Он использует CPython для выполнения кода, поэтому поддерживает синтаксис Python, классы, функции, исключения, асинхронность, стандартную библиотеку и установленные пакеты.
