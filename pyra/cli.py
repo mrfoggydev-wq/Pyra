@@ -185,6 +185,65 @@ def _create_virtual_environment(arguments: list[str]) -> int:
     return result.returncode
 
 
+def _create_project(arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="pyra new", description="Создать стартовый проект Pyra.")
+    parser.add_argument("name", help="имя папки проекта")
+    options = parser.parse_args(arguments)
+
+    name = options.name
+    if (
+        not name.isascii()
+        or not name[0].isalnum()
+        or any(not (character.isalnum() or character in "-_ ") for character in name)
+        or name != name.strip()
+    ):
+        parser.error("имя проекта может содержать только латинские буквы, цифры, пробел, дефис и подчёркивание")
+
+    project_directory = (Path.cwd() / name).resolve()
+    if project_directory.exists():
+        parser.error(f"папка уже существует: {project_directory}")
+
+    package_name = name.lower().replace("_", "-").replace(" ", "-")
+    project_directory.mkdir(parents=True)
+    (project_directory / "main.fm").write_text(
+        "def main() -> None:\n"
+        f"    print(\"Привет из проекта {name}!\")\n"
+        "\n\n"
+        "if __name__ == \"__main__\":\n"
+        "    main()\n",
+        encoding="utf-8",
+    )
+    (project_directory / "README.md").write_text(
+        f"# {name}\n\n"
+        "Проект на языке Pyra.\n\n"
+        "## Запуск\n\n"
+        "```powershell\n"
+        "pyra main.fm\n"
+        "```\n\n"
+        "## Зависимости\n\n"
+        "Установить пакет из PyPI: `pyra install имя-пакета`.\n\n"
+        "## Сборка\n\n"
+        "```powershell\n"
+        "pyra build main.fm\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    (project_directory / ".gitignore").write_text(
+        ".venv/\n__pycache__/\n*.py[cod]\nbuild/\ndist/\n.pyra-cache/\n",
+        encoding="utf-8",
+    )
+    (project_directory / "pyproject.toml").write_text(
+        f"[project]\nname = \"{package_name}\"\nversion = \"0.1.0\"\n"
+        "requires-python = \">=3.10\"\n\n"
+        "[tool.pyra]\nentrypoint = \"main.fm\"\n",
+        encoding="utf-8",
+    )
+
+    print(f"Создан проект: {project_directory}")
+    print(f"Запуск: pyra {name}/main.fm")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pyra",
@@ -447,6 +506,8 @@ def _build_executable(argv: list[str]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     arguments_list = list(sys.argv[1:] if argv is None else argv)
+    if arguments_list and arguments_list[0] == "new":
+        return _create_project(arguments_list[1:])
     if arguments_list and arguments_list[0] == "list":
         if len(arguments_list) > 1:
             print("Использование: pyra list", file=sys.stderr)

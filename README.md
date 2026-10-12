@@ -4,6 +4,27 @@ Pyra — язык с файлами `.fm` и полной совместимос
 
 Это не переписанный с нуля Python: отдельный слой Pyra добавляет команду `pyra` и импорт модулей `.fm`, а сам код выполняется стандартным Python runtime. Расширение `.pyra` тоже поддерживается для совместимости.
 
+## Зачем Pyra
+
+Pyra предназначена для тех, кто хочет писать Python-совместимый код в файлах `.fm` и пользоваться одной командой для повседневных задач: создания проекта, управления зависимостями, виртуальными средами и сборки Windows-приложений. Автономный SDK позволяет запускать Pyra и собранные приложения без отдельной установки Python на целевом компьютере.
+
+Pyra не заменяет Python runtime и не обещает иной производительности: это проектный CLI, загрузчик `.fm`-модулей и собственная упаковка вокруг CPython.
+
+## Отличия от Python
+
+- Исходники Pyra обычно имеют расширение `.fm`; синтаксис и семантика кода остаются Python.
+- Команда `pyra` добавляет `new`, `install`, `list`, `uninstall`, `venv` и `build`.
+- Pyra загружает модули `.fm` и умеет упаковывать проект вместе с CPython runtime.
+- Обычный Python использует `.py` и стандартные инструменты `python`/`pip`; код Pyra выполняется CPython и совместим с его библиотеками.
+
+Создать и запустить новый проект:
+
+```powershell
+pyra new my-project
+cd my-project
+pyra main.fm
+```
+
 ## Требования
 
 - Для разработки и запуска исходников: Python 3.10+.
@@ -83,7 +104,7 @@ pyra uninstall requests
 
 ## Установщик Windows
 
-Собранные exe находятся в `dist`, которая исключена из Git. Для публикации установщик `PyraSetup-Fixed.exe` и SDK `Pyra.exe` прикрепляются к GitHub Release. Сам актуальный `Pyra.exe` встроен в установщик, поэтому ссылка на скачивание и интернет для установки не нужны. Установщик копирует Pyra в `Program Files/Pyra` и добавляет каталог в системный `PATH`; запускать его нужно от имени администратора.
+Собранные exe находятся в `dist`, которая исключена из Git. Для публикации установщик `PyraSetup-Projects.exe` и SDK `Pyra.exe` прикрепляются к GitHub Release. Сам актуальный `Pyra.exe` встроен в установщик, поэтому ссылка на скачивание и интернет для установки не нужны. Установщик копирует Pyra в `Program Files/Pyra` и добавляет каталог в системный `PATH`; запускать его нужно от имени администратора.
 
 Для пересборки установщика используй Windows C# compiler:
 
@@ -91,7 +112,7 @@ pyra uninstall requests
 $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $source = (Resolve-Path .\pyra\installer.cs).Path
 $pyra = (Resolve-Path .\dist\Pyra.exe).Path
-& $csc /nologo /target:winexe /out:dist/PyraSetup-Fixed.exe "/resource:$pyra,PyraExecutable" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll $source
+& $csc /nologo /target:winexe /out:dist/PyraSetup-Projects.exe "/resource:$pyra,PyraExecutable" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll $source
 ```
 
 После установки открой новый терминал и проверь команду `pyra --version`.

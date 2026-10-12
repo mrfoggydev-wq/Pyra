@@ -13,6 +13,7 @@ from PIL import Image
 from pyra.cli import (
     _add_python_runtime,
     _create_build_archive,
+    _create_project,
     _create_virtual_environment,
     _install_packages,
     _package_directory,
@@ -33,6 +34,35 @@ class PyraCliTests(unittest.TestCase):
             text=True,
             check=False,
         )
+
+    def test_new_creates_project_template(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory, patch(
+            "pyra.cli.Path.cwd", return_value=Path(temporary_directory)
+        ):
+            result = _create_project(["sample-app"])
+            project = Path(temporary_directory) / "sample-app"
+
+            self.assertEqual(result, 0)
+            self.assertTrue((project / "main.fm").is_file())
+            self.assertTrue((project / "README.md").is_file())
+            self.assertTrue((project / ".gitignore").is_file())
+            self.assertTrue((project / "pyproject.toml").is_file())
+            self.assertIn("sample-app", (project / "main.fm").read_text(encoding="utf-8"))
+
+    def test_new_refuses_to_overwrite_existing_project(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory, patch(
+            "pyra.cli.Path.cwd", return_value=Path(temporary_directory)
+        ):
+            project = Path(temporary_directory) / "sample-app"
+            project.mkdir()
+            marker = project / "keep.txt"
+            marker.write_text("keep", encoding="utf-8")
+
+            with self.assertRaises(SystemExit) as error:
+                _create_project(["sample-app"])
+
+            self.assertEqual(error.exception.code, 2)
+            self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
 
     def test_runs_python_syntax_from_fm_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
