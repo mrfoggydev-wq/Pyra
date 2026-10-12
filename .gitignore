@@ -1,0 +1,22 @@
+# Python bytecode and environments
+__pycache__/
+*.py[cod]
+*.pyd
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging and test output
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Pyra runtime cache and local secrets
+.pyra-cache/
+.env
+.env.*
+!.env.example

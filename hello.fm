@@ -1,0 +1,9 @@
+from pathlib import Path
+import psutil
+
+def greet(name: str) -> str:
+    return f"Привет, {name}! Это программа на Pyra."
+
+print(greet("мир"))
+print(f"Текущая папка: {Path.cwd()}")
+print(f"Загрузка процессора: {psutil.cpu_percent(interval=1)}%")

@@ -1,0 +1,8 @@
+{
+  "files.associations": {
+    "*.fm": "python"
+  },
+  "terminal.integrated.env.windows": {
+    "PATH": "${workspaceFolder}\\dist;${env:PATH}"
+  }
+}
