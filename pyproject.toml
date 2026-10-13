@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyra-language"
-version = "0.1.0"
+version = "0.3.0"
 description = "A Python-compatible language with .fm source files"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["Pillow>=10"]
+dependencies = ["Pillow>=10", "black>=24"]
 
 [project.scripts]
 pyra = "pyra.cli:main"

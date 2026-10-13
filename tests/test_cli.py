@@ -1,5 +1,7 @@
 import subprocess
 import csv
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -12,12 +14,19 @@ from PIL import Image
 
 from pyra.cli import (
     _add_python_runtime,
+    _clean_project,
     _create_build_archive,
     _create_project,
     _create_virtual_environment,
+    _doctor,
+    _document_file,
+    _format_file,
+    _initialize_project,
     _install_packages,
     _package_directory,
     _uninstall_packages,
+    _print_version,
+    _upgrade_pyra,
     _prepare_icon,
 )
 
@@ -73,6 +82,146 @@ class PyraCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "14")
+
+    def test_run_alias_executes_script_and_passes_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            script = Path(temporary_directory) / "program.fm"
+            script.write_text("import sys\nprint(sys.argv[1])\n", encoding="utf-8")
+
+            result = self.run_pyra("run", str(script), "from-run")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "from-run")
+
+    def test_fmt_invokes_black_on_fm_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            source = Path(temporary_directory) / "app.fm"
+            source.write_text("value=1\n", encoding="utf-8")
+            with patch("pyra.cli.importlib.util.find_spec", return_value=object()), patch(
+                "pyra.cli.subprocess.run"
+            ) as run_process:
+                run_process.return_value.returncode = 0
+                result = _format_file([str(source)])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(run_process.call_args.args[0][1:3], ["-m", "black"])
+        self.assertEqual(run_process.call_args.args[0][-1], str(source.resolve()))
+
+    def test_fmt_formats_fm_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            source = Path(temporary_directory) / "app.fm"
+            source.write_text("value=1\n", encoding="utf-8")
+
+            result = self.run_pyra("fmt", str(source))
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(source.read_text(encoding="utf-8"), "value = 1\n")
+
+    def test_doc_generates_module_functions_and_class_methods(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            source = Path(temporary_directory) / "app.fm"
+            source.write_text(
+                '"""Module overview."""\n\n'
+                'def greet(name: str) -> str:\n    """Return a greeting."""\n    return name\n\n'
+                'class Counter:\n    """Count values."""\n'
+                '    def increment(self, amount: int = 1) -> int:\n'
+                '        """Increase the counter."""\n        return amount\n',
+                encoding="utf-8",
+            )
+
+            result = _document_file([str(source)])
+            documentation = Path(temporary_directory) / "docs" / "app.md"
+            output = documentation.read_text(encoding="utf-8")
+
+        self.assertEqual(result, 0)
+        self.assertIn("Module overview.", output)
+        self.assertIn("greet(name: str) -> str", output)
+        self.assertIn("Return a greeting.", output)
+        self.assertIn("Counter", output)
+        self.assertIn("Increase the counter.", output)
+
+    def test_init_creates_pyra_toml_and_does_not_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory, patch(
+            "pyra.cli.Path.cwd", return_value=Path(temporary_directory)
+        ):
+            self.assertEqual(_initialize_project(["--name", "demo"]), 0)
+            config = Path(temporary_directory) / "pyra.toml"
+            contents = config.read_text(encoding="utf-8")
+            self.assertIn('name = "demo"', contents)
+            self.assertEqual(_initialize_project([]), 1)
+            self.assertEqual(config.read_text(encoding="utf-8"), contents)
+
+    def test_clean_removes_only_project_venv_and_cache_after_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            virtual_environment = root / ".venv"
+            virtual_environment.mkdir()
+            cache = root / ".pyra-cache"
+            cache.mkdir()
+            nested_cache = root / "dist" / ".pyra-cache"
+            nested_cache.mkdir(parents=True)
+            keep_file = root / "important.txt"
+            keep_file.write_text("keep", encoding="utf-8")
+
+            with patch("pyra.cli.Path.cwd", return_value=root), patch.dict(
+                os.environ, {"VIRTUAL_ENV": "", "PYRA_CACHE_DIR": ""}
+            ), patch("builtins.input", return_value="y"):
+                result = _clean_project([])
+
+            self.assertEqual(result, 0)
+            self.assertFalse(virtual_environment.exists())
+            self.assertFalse(cache.exists())
+            self.assertFalse(nested_cache.exists())
+            self.assertTrue(keep_file.exists())
+
+    def test_doctor_reports_python_runtime(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = _doctor()
+
+        self.assertEqual(result, 0)
+        self.assertIn("Диагностика Pyra", output.getvalue())
+        self.assertIn("Python:", output.getvalue())
+        self.assertIn("pip:", output.getvalue())
+
+    def test_version_reports_installation_details(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = _print_version()
+
+        self.assertEqual(result, 0)
+        self.assertIn("Pyra ", output.getvalue())
+        self.assertIn("Установлен в:", output.getvalue())
+        self.assertIn("Интерпретатор:", output.getvalue())
+
+    @patch("pyra.cli.subprocess.run")
+    def test_upgrade_updates_clean_source_checkout(self, run_process: object) -> None:
+        run_process.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            subprocess.CompletedProcess([], 0),
+        ]
+        with patch("pyra.cli._git_root", return_value=PROJECT_ROOT):
+            result = _upgrade_pyra([])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(run_process.call_args.args[0], ["git", "-C", str(PROJECT_ROOT), "pull", "--ff-only"])
+
+    @patch("pyra.cli.subprocess.run")
+    def test_upgrade_embedded_installs_latest_source_into_package_directory(self, run_process: object) -> None:
+        run_process.return_value.returncode = 0
+        with tempfile.TemporaryDirectory() as temporary_directory, patch(
+            "pyra.cli._git_root", return_value=None
+        ), patch.dict(
+            os.environ,
+            {"PYRA_EMBEDDED_RUNTIME": "1", "PYRA_PACKAGE_DIR": temporary_directory},
+        ):
+            result = _upgrade_pyra([])
+
+        self.assertEqual(result, 0)
+        command = run_process.call_args.args[0]
+        self.assertIn("--target", command)
+        self.assertIn(temporary_directory, command)
+        self.assertTrue(any("github.com/mrfoggydev-wq/Pyra" in argument for argument in command))
 
     def test_imports_fm_module(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -1,7 +1,8 @@
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
-![Tests](https://github.com/mrfoggydev-wq/Pyra/actions/workflows/.../badge.svg)
+![Tests](https://github.com/mrfoggydev-wq/Pyra/actions/workflows/tests.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
+
 # Pyra
 
 Pyra — язык с файлами `.fm` и полной совместимостью с Python. Он использует CPython для выполнения кода, поэтому поддерживает синтаксис Python, классы, функции, исключения, асинхронность, стандартную библиотеку и установленные пакеты.
@@ -17,7 +18,7 @@ Pyra не заменяет Python runtime и не обещает иной про
 ## Отличия от Python
 
 - Исходники Pyra обычно имеют расширение `.fm`; синтаксис и семантика кода остаются Python.
-- Команда `pyra` добавляет `new`, `install`, `list`, `uninstall`, `venv` и `build`.
+- Команда `pyra` добавляет `new`, `run`, `fmt`, `doc`, `init`, `clean`, `doctor`, `version`, `upgrade`, `install`, `list`, `uninstall`, `venv` и `build`.
 - Pyra загружает модули `.fm` и умеет упаковывать проект вместе с CPython runtime.
 - Обычный Python использует `.py` и стандартные инструменты `python`/`pip`; код Pyra выполняется CPython и совместим с его библиотеками.
 
@@ -58,10 +59,41 @@ GitHub Actions автоматически запускает тесты на Win
 ```powershell
 pyra --version
 pyra examples/hello.fm
+pyra run examples/hello.fm
 pyra --check examples/hello.fm
 pyra -c "print('Привет из Pyra')"
 pyra -m http.server 8000
 ```
+
+## Инструменты проекта
+
+```powershell
+pyra fmt app.fm
+pyra doc app.fm
+pyra init
+pyra doctor
+pyra version
+pyra clean
+pyra upgrade
+```
+
+`fmt` использует Black; `doc` генерирует `docs/app.md` из docstrings функций и классов. `init` создаёт `pyra.toml` и не перезаписывает существующий. `doctor` проверяет Python, pip, Black, компилятор и место под кэш. `version` показывает версию, интерпретатор и расположение Pyra.
+
+`clean` сначала перечисляет файлы и спрашивает подтверждение; он удаляет только локальные `.venv` и кэши проекта. `pyra clean --yes` пропускает подтверждение. `upgrade` делает `git pull --ff-only` в чистом checkout либо устанавливает актуальный SDK из GitHub в standalone-установке.
+
+## Команды проекта
+
+```powershell
+pyra init                 # создать pyra.toml
+pyra fmt app.fm           # форматировать код через Black
+pyra doc app.fm           # создать docs/app.md из docstrings
+pyra doctor               # проверить окружение
+pyra version              # показать версию и пути установки
+pyra clean                # спросить подтверждение и очистить .venv/кэш
+pyra upgrade              # обновить чистый checkout или standalone SDK
+```
+
+`pyra clean --yes` выполняет очистку без вопроса. Команда не удаляет кэш вне проекта. `pyra upgrade` в исходном репозитории требует чистого Git checkout; standalone SDK скачивает актуальные исходники с GitHub для следующего запуска.
 
 ## Сборка приложения
 
@@ -108,7 +140,7 @@ pyra uninstall requests
 
 ## Установщик Windows
 
-Собранные exe находятся в `dist`, которая исключена из Git. Для публикации установщик `PyraSetup-Projects.exe` и SDK `Pyra.exe` прикрепляются к GitHub Release. Сам актуальный `Pyra.exe` встроен в установщик, поэтому ссылка на скачивание и интернет для установки не нужны. Установщик копирует Pyra в `Program Files/Pyra` и добавляет каталог в системный `PATH`; запускать его нужно от имени администратора.
+Собранные exe находятся в `dist`, которая исключена из Git. Для публикации установщик `PyraSetup-Toolkit.exe` и SDK `Pyra.exe` прикрепляются к GitHub Release. Сам актуальный `Pyra.exe` встроен в установщик, поэтому ссылка на скачивание и интернет для установки не нужны. Установщик копирует Pyra в `Program Files/Pyra` и добавляет каталог в системный `PATH`; запускать его нужно от имени администратора.
 
 Для пересборки установщика используй Windows C# compiler:
 
@@ -116,7 +148,7 @@ pyra uninstall requests
 $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $source = (Resolve-Path .\pyra\installer.cs).Path
 $pyra = (Resolve-Path .\dist\Pyra.exe).Path
-& $csc /nologo /target:winexe /out:dist/PyraSetup-Projects.exe "/resource:$pyra,PyraExecutable" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll $source
+& $csc /nologo /target:winexe /out:dist/PyraSetup-Toolkit.exe "/resource:$pyra,PyraExecutable" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll $source
 ```
 
 После установки открой новый терминал и проверь команду `pyra --version`.

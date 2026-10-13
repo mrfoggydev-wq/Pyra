@@ -1,10 +1,14 @@
 """Command-line runner and custom Windows builder for Pyra."""
 
 import argparse
+import ast
 import code
 import hashlib
 import importlib.metadata
+import importlib.util
+import json
 import os
+import platform
 import runpy
 import site
 import shutil
@@ -38,6 +42,18 @@ def _execute_file(filename: str, arguments: list[str]) -> None:
         "__cached__": None,
     }
     exec(compiled, namespace)
+
+
+def _run_script(arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="pyra run", description="Запустить программу Pyra.")
+    parser.add_argument("script", help="путь к файлу .fm")
+    parser.add_argument("args", nargs=argparse.REMAINDER, help="аргументы программы")
+    options = parser.parse_args(arguments)
+    script_arguments = options.args
+    if script_arguments and script_arguments[0] == "--":
+        script_arguments = script_arguments[1:]
+    _execute_file(options.script, script_arguments)
+    return 0
 
 
 def _check_file(filename: str) -> None:
@@ -244,6 +260,252 @@ def _create_project(arguments: list[str]) -> int:
     return 0
 
 
+def _format_file(arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="pyra fmt", description="Форматировать файл Pyra через Black.")
+    parser.add_argument("file", type=Path, help="файл .fm или .pyra")
+    options = parser.parse_args(arguments)
+    source = options.file.resolve()
+    if not source.is_file():
+        parser.error(f"файл не найден: {source}")
+    if source.suffix.lower() not in {".fm", ".pyra"}:
+        parser.error("форматировать можно только .fm или .pyra")
+    if importlib.util.find_spec("black") is None:
+        print("Black не установлен. Выполни: pyra install black", file=sys.stderr)
+        return 1
+    return subprocess.run([sys.executable, "-m", "black", str(source)], check=False).returncode
+
+
+def _function_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+    prefix = "async " if isinstance(node, ast.AsyncFunctionDef) else ""
+    signature = f"{prefix}def {node.name}({ast.unparse(node.args)})"
+    if node.returns is not None:
+        signature += f" -> {ast.unparse(node.returns)}"
+    return signature
+
+
+def _append_function_documentation(
+    lines: list[str],
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    heading_level: int,
+) -> None:
+    lines.extend([f"{'#' * heading_level} `{node.name}`", "", "```python", _function_signature(node), "```", ""])
+    lines.extend([ast.get_docstring(node) or "_Докстринг не задан._", ""])
+
+
+def _document_file(arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="pyra doc", description="Сгенерировать Markdown-документацию из docstrings.")
+    parser.add_argument("file", type=Path, help="исходный файл .fm или .pyra")
+    parser.add_argument("--output", type=Path, help="путь к Markdown-файлу")
+    options = parser.parse_args(arguments)
+
+    source = options.file.resolve()
+    if not source.is_file():
+        parser.error(f"файл не найден: {source}")
+    with tokenize.open(source) as source_file:
+        source_text = source_file.read()
+    module = ast.parse(source_text, filename=str(source))
+    lines = [f"# {source.stem}", ""]
+    module_docstring = ast.get_docstring(module)
+    if module_docstring:
+        lines.extend([module_docstring, ""])
+
+    for node in module.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_"):
+            _append_function_documentation(lines, node, 2)
+        elif isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
+            bases = f"({', '.join(ast.unparse(base) for base in node.bases)})" if node.bases else ""
+            lines.extend([f"## `{node.name}{bases}`", "", ast.get_docstring(node) or "_Докстринг не задан._", ""])
+            for member in node.body:
+                if (
+                    isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and not member.name.startswith("__")
+                ):
+                    _append_function_documentation(lines, member, 3)
+
+    output = options.output.resolve() if options.output else source.parent / "docs" / f"{source.stem}.md"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    print(f"Документация создана: {output}")
+    return 0
+
+
+def _initialize_project(arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="pyra init", description="Создать pyra.toml в текущей папке.")
+    parser.add_argument("--name", help="имя проекта; по умолчанию имя текущей папки")
+    options = parser.parse_args(arguments)
+    config = Path.cwd() / "pyra.toml"
+    if config.exists():
+        print(f"Файл уже существует: {config}", file=sys.stderr)
+        return 1
+
+    name = options.name or Path.cwd().name
+    config.write_text(
+        "[project]\n"
+        f"name = {json.dumps(name, ensure_ascii=False)}\n"
+        f"version = \"{__version__}\"\n"
+        "requires-python = \">=3.10\"\n\n"
+        "[tool.pyra]\n"
+        "entrypoint = \"main.fm\"\n",
+        encoding="utf-8",
+    )
+    print(f"Создан файл: {config}")
+    return 0
+
+
+def _clean_project(arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="pyra clean", description="Удалить локальную .venv и кэш Pyra проекта.")
+    parser.add_argument("-y", "--yes", action="store_true", help="не запрашивать подтверждение")
+    options = parser.parse_args(arguments)
+    root = Path.cwd().resolve()
+    targets = [root / ".venv", root / ".pyra-cache", root / "dist" / ".pyra-cache"]
+    configured_cache = os.environ.get("PYRA_CACHE_DIR")
+    if configured_cache:
+        cache_path = Path(configured_cache).expanduser().resolve()
+        try:
+            cache_path.relative_to(root)
+        except ValueError:
+            pass
+        else:
+            targets.append(cache_path)
+    targets = list(dict.fromkeys(path for path in targets if path.exists()))
+    if not targets:
+        print("Локальная .venv и кэш Pyra не найдены.")
+        return 0
+
+    target_environment = (root / ".venv").resolve()
+    active_environment = os.environ.get("VIRTUAL_ENV")
+    if (
+        (active_environment and Path(active_environment).resolve() == target_environment)
+        or Path(sys.prefix).resolve() == target_environment
+    ):
+        print("Сначала выйди из активной .venv командой deactivate.", file=sys.stderr)
+        return 1
+    if not options.yes:
+        print("Будут удалены:")
+        for target in targets:
+            print(f"  {target}")
+        try:
+            answer = input("Продолжить? [y/N] ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer not in {"y", "yes", "д", "да"}:
+            print("Отменено.")
+            return 0
+
+    for target in targets:
+        if target.is_symlink() or target.is_file():
+            target.unlink()
+        else:
+            shutil.rmtree(target)
+        print(f"Удалено: {target}")
+    return 0
+
+
+def _windows_compiler() -> Path | None:
+    if sys.platform != "win32":
+        return None
+    windows_dir = Path(os.environ.get("WINDIR", r"C:\Windows"))
+    candidates = (
+        windows_dir / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe",
+        windows_dir / "Microsoft.NET" / "Framework" / "v4.0.30319" / "csc.exe",
+    )
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
+
+
+def _doctor() -> int:
+    print("Диагностика Pyra")
+    checks: list[tuple[str, str, bool]] = [
+        (
+            "Python",
+            f"{platform.python_version()} ({sys.executable})",
+            sys.version_info >= (3, 10),
+        ),
+        ("pip", "доступен" if importlib.util.find_spec("pip") else "не найден", importlib.util.find_spec("pip") is not None),
+        (
+            "Black",
+            "доступен" if importlib.util.find_spec("black") else "не установлен; нужен для pyra fmt",
+            importlib.util.find_spec("black") is not None,
+        ),
+        (
+            "pyra.toml",
+            "найден" if (Path.cwd() / "pyra.toml").is_file() else "не найден в текущем проекте",
+            (Path.cwd() / "pyra.toml").is_file(),
+        ),
+    ]
+    compiler = _windows_compiler()
+    checks.append(("Windows C# compiler", str(compiler) if compiler else "не найден или не Windows", compiler is not None))
+    cache = Path(os.environ.get("PYRA_CACHE_DIR", Path.cwd() / ".pyra-cache")).expanduser()
+    disk_target = cache
+    while not disk_target.exists() and disk_target != disk_target.parent:
+        disk_target = disk_target.parent
+    try:
+        free_space = shutil.disk_usage(disk_target).free
+        cache_detail = f"{cache} ({free_space // (1024 * 1024)} МБ свободно)"
+        cache_available = free_space > 0
+    except OSError:
+        cache_detail = f"не удалось проверить {cache}"
+        cache_available = False
+    checks.append(("Кэш", cache_detail, cache_available))
+
+    failed = False
+    for name, detail, ok in checks:
+        print(f"[{ 'OK' if ok else 'WARN' }] {name}: {detail}")
+        if name == "Python" and not ok:
+            failed = True
+        if name == "pip" and not ok:
+            failed = True
+    return 1 if failed else 0
+
+
+def _print_version() -> int:
+    print(f"Pyra {__version__}")
+    print(f"Установлен в: {Path(__file__).resolve().parent}")
+    print(f"Python: {platform.python_version()}")
+    print(f"Интерпретатор: {Path(sys.executable).resolve()}")
+    print(f"Платформа: {platform.platform()}")
+    print(f"Среда: {Path(sys.prefix).resolve()}")
+    return 0
+
+
+def _git_root(directory: Path) -> Path | None:
+    current = directory.resolve()
+    if current.is_file():
+        current = current.parent
+    for parent in (current, *current.parents):
+        if (parent / ".git").exists():
+            return parent
+    return None
+
+
+def _upgrade_pyra(arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="pyra upgrade", description="Обновить Pyra до последней версии GitHub.")
+    parser.parse_args(arguments)
+    repository = _git_root(Path(__file__))
+    if repository is not None:
+        status = subprocess.run(
+            ["git", "-C", str(repository), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if status.returncode == 0 and status.stdout.strip():
+            print("В репозитории есть незакоммиченные изменения; сохрани их перед обновлением.", file=sys.stderr)
+            return 1
+        if status.returncode == 0:
+            return subprocess.run(["git", "-C", str(repository), "pull", "--ff-only"], check=False).returncode
+
+    source_url = "https://github.com/mrfoggydev-wq/Pyra/archive/refs/heads/main.zip"
+    requirement = f"pyra-language @ {source_url}"
+    package_directory = os.environ.get("PYRA_PACKAGE_DIR")
+    if os.environ.get("PYRA_EMBEDDED_RUNTIME") == "1":
+        target = Path(package_directory or _package_directory())
+        target.mkdir(parents=True, exist_ok=True)
+        command = [sys.executable, "-m", "pip", "install", "--upgrade", "--target", str(target), requirement]
+    else:
+        command = [sys.executable, "-m", "pip", "install", "--upgrade", requirement]
+    return subprocess.run(command, check=False).returncode
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pyra",
@@ -285,8 +547,12 @@ def _create_build_archive(
             archive.writestr(
                 "app/_pyra_cli.py",
                 "import sys\n"
+                "import os\n"
                 "from pathlib import Path\n"
                 "sys.path.insert(0, str(Path(__file__).resolve().parent))\n"
+                "package_root = os.environ.get('PYRA_PACKAGE_DIR')\n"
+                "if package_root:\n"
+                "    sys.path.insert(0, package_root)\n"
                 "from pyra.cli import main\n"
                 "raise SystemExit(main())\n",
             )
@@ -426,12 +692,7 @@ def _build_executable(argv: list[str]) -> int:
         if not data_path.exists():
             parser.error(f"дополнительный файл не найден: {data_path}")
 
-    windows_dir = Path(os.environ.get("WINDIR", r"C:\Windows"))
-    compiler_candidates = [
-        windows_dir / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe",
-        windows_dir / "Microsoft.NET" / "Framework" / "v4.0.30319" / "csc.exe",
-    ]
-    compiler = next((path for path in compiler_candidates if path.is_file()), None)
+    compiler = _windows_compiler()
     if compiler is None:
         print("Не найден встроенный компилятор Windows csc.exe.", file=sys.stderr)
         return 1
@@ -506,6 +767,28 @@ def _build_executable(argv: list[str]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     arguments_list = list(sys.argv[1:] if argv is None else argv)
+    if arguments_list and arguments_list[0] == "fmt":
+        return _format_file(arguments_list[1:])
+    if arguments_list and arguments_list[0] == "doc":
+        return _document_file(arguments_list[1:])
+    if arguments_list and arguments_list[0] == "init":
+        return _initialize_project(arguments_list[1:])
+    if arguments_list and arguments_list[0] == "clean":
+        return _clean_project(arguments_list[1:])
+    if arguments_list and arguments_list[0] == "doctor":
+        if len(arguments_list) > 1:
+            print("Использование: pyra doctor", file=sys.stderr)
+            return 2
+        return _doctor()
+    if arguments_list and arguments_list[0] == "version":
+        if len(arguments_list) > 1:
+            print("Использование: pyra version", file=sys.stderr)
+            return 2
+        return _print_version()
+    if arguments_list and arguments_list[0] == "upgrade":
+        return _upgrade_pyra(arguments_list[1:])
+    if arguments_list and arguments_list[0] == "run":
+        return _run_script(arguments_list[1:])
     if arguments_list and arguments_list[0] == "new":
         return _create_project(arguments_list[1:])
     if arguments_list and arguments_list[0] == "list":
